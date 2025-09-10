@@ -101,6 +101,22 @@
     background: currentColor; display:inline-block; animation: cloudPulse .9s infinite ease-in-out;
   }
   @keyframes cloudPulse { 0%{opacity:.25; transform:scale(.8)} 50%{opacity:1; transform:scale(1)} 100%{opacity:.25; transform:scale(.8)} }
+
+  /* ---- Minimal modal for link decision ---- */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:grid;place-items:center;z-index:1000}
+  .modal .box{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);
+    width:min(92vw,480px);padding:12px 12px}
+  .modal h3{margin:0 0 6px 0;font-size:16px}
+  .modal p{margin:0 0 10px 0;font-size:13px;color:var(--muted)}
+  .modal .meta{font-size:12px;color:var(--muted);margin:8px 0}
+  .modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+  .modal .actions button{padding:8px 10px;border-radius:10px;border:1px solid var(--border);
+    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.04));color:var(--fg);font-weight:600}
+  .modal .actions .danger{color:#ff7a7a;border-color:rgba(255,122,122,.40);
+    background:linear-gradient(180deg,rgba(255,122,122,.12),rgba(0,0,0,.02))}
+  .modal .actions .primary{border-color:rgba(122,162,255,.45);
+    background:linear-gradient(180deg,rgba(122,162,255,.14),rgba(0,0,0,.03))}
+
 </style>
 
 <div class="wrap">
@@ -174,8 +190,54 @@ const uiState = {
   dayClosed:   new Set()              // keys: "YYYY-MM-DD"
 };
 
-
 const $ = sel => document.querySelector(sel);
+
+const LINKED_KEY = 'cloud_linked'; // '1' once user chooses which side wins
+
+function fmt(ts) {
+  try { return new Date(ts).toLocaleString(); } catch { return ts || '—'; }
+}
+
+async function fetchRemotePreview(url, key) {
+  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${key}` } });
+  if (!res.ok) throw new Error(`Cloud read failed (${res.status})`);
+  const json = await res.json();
+  return {
+    entries: Array.isArray(json?.entries) ? json.entries : [],
+    updatedAt: json?.meta?.updatedAt || null
+  };
+}
+
+// 3-button modal. Returns 'cloud' | 'local' | 'cancel'
+function showSyncChoice({ localCount, localStamp, remoteCount, remoteStamp }) {
+  return new Promise(resolve => {
+    const el = document.createElement('div');
+    el.className = 'modal';
+    el.innerHTML = `
+      <div class="box">
+        <h3>Choose source of truth</h3>
+        <p>Linking cloud sync can overwrite data. Pick which side should win:</p>
+        <div class="meta">
+          <div>Local: <b>${localCount}</b> entries — updated <i>${fmt(localStamp) || 'n/a'}</i></div>
+          <div>Cloud: <b>${remoteCount}</b> entries — updated <i>${fmt(remoteStamp) || 'n/a'}</i></div>
+        </div>
+        <div class="actions">
+          <button data-k="cancel">Cancel</button>
+          <button class="danger" data-k="cloud">Use Cloud</button>
+          <button class="primary" data-k="local">Use Local</button>
+        </div>
+      </div>`;
+    el.addEventListener('click', e => {
+      const k = e.target?.dataset?.k;
+      if (!k) return;
+      el.remove();
+      resolve(k);
+    });
+    document.body.appendChild(el);
+  });
+}
+
+
 
 function setCloudBadge(state, tooltip){
   const el = $('#cloudBadge'); if(!el) return;
@@ -371,20 +433,83 @@ const syncStatus = document.getElementById('syncStatus');
 
 toggleSettingsBtn.onclick = ()=>{ settings.style.display = (settings.style.display==='none'||!settings.style.display) ? 'block' : 'none' };
 
-document.getElementById('saveSettings').onclick = async ()=>{
-  localStorage.setItem(NP_URL_KEY, npUrlEl.value.trim());
-  localStorage.setItem(NP_KEY_KEY, npKeyEl.value.trim());
-  syncStatus.textContent = 'Saved.';
+document.getElementById('saveSettings').onclick = async () => {
+  const tempUrl = npUrlEl.value.trim();
+  const tempKey = npKeyEl.value.trim();
+  syncStatus.textContent = 'Checking…';
 
-  if (haveCreds()) {
-    setCloudBadge('cloud-syncing','Checking cloud…');
-    await syncCloud('auto');
-    setCloudBadge('cloud-ok','Cloud linked');
-    startAutoSync();
-  } else {
-    setCloudBadge('cloud-local','Local-only');
+  // Don’t save creds yet. First, preview remote + compare to local.
+  if (!tempUrl || !tempKey) {
+    // Clearing creds
+    localStorage.removeItem(NP_URL_KEY);
+    localStorage.removeItem(NP_KEY_KEY);
+    localStorage.removeItem(LINKED_KEY);
+    setCloudBadge('cloud-local', 'Local-only');
+    syncStatus.textContent = 'Cleared. Local-only mode.';
+    return;
   }
+
+  // Prepare local preview
+  const localEntries = getEntries();
+  const localStamp = localStorage.getItem(UPDATED_AT_KEY) || null;
+  let remotePreview;
+  try {
+    setCloudBadge('cloud-syncing','Contacting cloud…');
+    remotePreview = await fetchRemotePreview(tempUrl, tempKey);
+  } catch (err) {
+    setCloudBadge('cloud-error','Cloud read failed');
+    syncStatus.textContent = 'Cloud read failed. Not linking.';
+    return;
+  }
+
+  // If both sides have data and stamps may differ, ask the user.
+  let choice = 'local'; // default if one side is empty
+  const bothHaveSomething = (localEntries.length || localStamp) && (remotePreview.entries.length || remotePreview.updatedAt);
+  if (bothHaveSomething) {
+    choice = await showSyncChoice({
+      localCount: localEntries.length,
+      localStamp,
+      remoteCount: remotePreview.entries.length,
+      remoteStamp: remotePreview.updatedAt
+    });
+  } else if (!localEntries.length && !remotePreview.entries.length) {
+    // nothing anywhere → just link but nothing to sync
+    choice = 'local';
+  } else if (!localEntries.length) {
+    choice = 'cloud';
+  } else {
+    choice = 'local';
+  }
+
+  if (choice === 'cancel') {
+    setCloudBadge('cloud-local','Local-only');
+    syncStatus.textContent = 'Canceled. Not linked.';
+    // IMPORTANT: do not store creds; leave inputs as typed.
+    return;
+  }
+
+  // Persist creds + mark linked
+  localStorage.setItem(NP_URL_KEY, tempUrl);
+  localStorage.setItem(NP_KEY_KEY, tempKey);
+  localStorage.setItem(LINKED_KEY, '1');
+
+  // Enact chosen direction once, then enable auto sync
+  if (choice === 'cloud') {
+    // Pull: overwrite local from cloud, set UPDATED_AT to cloud stamp
+    setEntries(remotePreview.entries, /* bump */ false);
+    if (remotePreview.updatedAt) localStorage.setItem(UPDATED_AT_KEY, remotePreview.updatedAt);
+    render();
+    syncStatus.textContent = 'Linked. Used cloud → local.';
+    setCloudBadge('cloud-ok','Pulled from cloud');
+  } else {
+    // Local wins: push once
+    await syncCloud('push');
+    syncStatus.textContent = 'Linked. Used local → cloud.';
+  }
+
+  startAutoSync();
 };
+
 
 document.getElementById('clearSettings').onclick = ()=>{
   localStorage.removeItem(NP_URL_KEY); localStorage.removeItem(NP_KEY_KEY);
@@ -442,6 +567,12 @@ async function syncCloud(mode = 'auto') {
   // 'auto'  -> compare stamps; push if local newer, pull if remote newer
   // 'pull'  -> unconditionally pull (if remote has data)
   // 'push'  -> unconditionally push
+
+  // block auto until user explicitly links
+  if (mode === 'auto' && localStorage.getItem(LINKED_KEY) !== '1') {
+    setCloudBadge('cloud-warn', 'Cloud not linked yet');
+    return;
+  }  
 
   const { url, key } = getCreds();
   if (!url || !key) { setCloudBadge('cloud-local','Local-only'); return; }
@@ -540,20 +671,11 @@ async function syncCloud(mode = 'auto') {
 let syncTimer = null;
 function startAutoSync(){
   if (syncTimer) clearInterval(syncTimer);
-  if (!haveCreds()) return;
-  // kick once soon after setting up
+  if (!haveCreds() || localStorage.getItem(LINKED_KEY) !== '1') return;
   setTimeout(() => syncCloud('auto'), 1500);
-  // then every minute
-  syncTimer = setInterval(() => {
-    if (!document.hidden) syncCloud('auto');
-  }, 60_000);
-
-  // also sync when tab/app regains focus
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && haveCreds()) syncCloud('auto');
-  }, { once: true });
+  syncTimer = setInterval(() => { if (!document.hidden) syncCloud('auto'); }, 60_000);
+  window.addEventListener('focus', () => syncCloud('auto'));
 }
-
 
 
 function entriesToCSV(rows) {
@@ -615,14 +737,15 @@ document.getElementById('exportBtn').onclick = exportCSV;
 // On load: safe, non-destructive bootstrap
 // On load: pull-only so we never upload on first run
 (async function initialSync(){
-  if (haveCreds()) {
+  if (haveCreds() && localStorage.getItem(LINKED_KEY) === '1') {
     setCloudBadge('cloud-syncing','Checking cloud…');
-    await syncCloud('auto');                 // ← pull-only
+    await syncCloud('auto');
     startAutoSync();
   } else {
     setCloudBadge('cloud-local','Local-only');
   }
 })();
+
 
 
 </script>
