@@ -1,6 +1,19 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Tell the UA we support both color schemes (affects form controls, etc.) -->
+<meta name="color-scheme" content="light dark">
+
+<!-- Android/Chrome/desktop address bar color by system theme -->
+<meta name="theme-color" content="#0b0b0f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f8fb" media="(prefers-color-scheme: light)">
+
+<!-- iOS PWA status bar (standalone). We'll override via JS on load too. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta id="ios-status" name="apple-mobile-web-app-status-bar-style" content="default">
+
+
 <link rel="manifest" href="/manifest.json">
 <title>timekeeper</title>
 <style>
@@ -27,14 +40,14 @@
   .badge .spacer{flex:1}
 
   textarea{width:100%;min-height:96px;resize:vertical;background:#0f1117;color:var(--fg);border:1px solid var(--border);
-           border-radius:10px;padding:10px 12px;line-height:1.35;font-size:15px;outline:none}
+           border-radius:10px;padding:10px 12px;line-height:1.35;font-size:15px;outline:none; box-sizing:border-box;}
   @media (prefers-color-scheme: light){textarea{background:#fbfbfe}}
   textarea::placeholder{color:#8b90a1}
   textarea:focus{border-color:rgba(122,162,255,.7);box-shadow:0 0 0 3px rgba(122,162,255,.14)}
   .row{display:flex;align-items:center;gap:8px;margin-top:6px}
   button{appearance:none;cursor:pointer;border:1px solid var(--border);
          background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.04));color:var(--fg);
-         padding:8px 12px;border-radius:10px;font-weight:600;letter-spacing:.15px}
+         border-radius:10px;font-weight:600;letter-spacing:.15px}
   #enable{background:linear-gradient(135deg,rgba(122,162,255,.28),rgba(201,162,255,.28));border-color:rgba(122,162,255,.5)}
   .hint{font-size:12px}
 
@@ -50,12 +63,12 @@
   .groups{display:grid;gap:6px}
   .year-title{font-weight:800;opacity:.9;margin:2px 0}
   .month-title{font-weight:700;opacity:.85;margin:2px 0}
-  details.day{border:1px dashed var(--border);border-radius:8px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(0,0,0,.02));padding:6px 8px}
+  details.day{padding:6px 0px}
   details.day>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px}
   details.day>summary::-webkit-details-marker{display:none}
   .day-count{font-size:12px;color:var(--muted)}
   .entries{list-style:none;padding:0;margin:6px 0 0}
-  details.entry{border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin:4px 0;background:rgba(255,255,255,.02)}
+  details.entry{padding:6px 0px;margin:4px 0;}
   details.entry>summary{list-style:none;cursor:pointer;display:flex}
   details.entry>summary::-webkit-details-marker{display:none}
   .entry-text{color:var(--fg);font-size:14px}
@@ -86,12 +99,17 @@
 <div class="wrap">
   <div class="card">
     <div class="head">
-      <div class="title">
-        <span class="emoji">⏰</span>
-        <h1>timekeeper</h1>
-        <button class="icon-btn" id="toggleSettings" title="Settings">⚙️</button>
-        <button class="icon-btn" title="Show instructions" id="showHelp">?</button>
-        <span id="cloudBadge" class="cloud-badge cloud-local" title="Local-only">LOCAL</span>
+      <div class="title" style="justify-content: space-between; flex:auto;">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="emoji">⏰</span>
+          <h1>timekeeper</h1>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="cloudBadge" class="cloud-badge cloud-local" title="Local-only">LOCAL</span>
+          <button class="icon-btn" id="toggleSettings" title="Settings">⚙️</button>
+          <button class="icon-btn" title="Show instructions" id="showHelp">?</button>
+        </div>
       </div>
     </div>
 
@@ -118,16 +136,12 @@
 
     <form id="entryForm">
       <textarea id="activityInput" placeholder="What are you doing right now? (one-liner is perfect)"></textarea>
-      <div class="row">
-        <button type="submit">Save Entry</button>
+      <div class="row" style="justify-content:space-between; margin-bottom: 16px;">
+        <button type="submit" style="padding: 8px 16px">Save Entry</button>
         <span id="saved" class="muted hint"></span>
+        <button id="toggleSort" class="icon-btn" title="Toggle sort">⇅</button>
       </div>
     </form>
-
-    <div class="toolbar">
-      <h3 style="margin:0">Recent</h3>
-      <button id="toggleSort" class="icon-btn" title="Toggle sort">⇅</button>
-    </div>
     <div id="groups" class="groups"></div>
   </div>
 </div>
@@ -252,7 +266,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   putEntry(v);
   document.getElementById('activityInput').value=''; render();
   document.getElementById('saved').textContent = 'Saved ✓'; setTimeout(()=>document.getElementById('saved').textContent='',1100);
-  if (haveCreds()) {setCloudBadge('cloud-syncing','Saving to cloud…'); await syncCloud('push');}
+  if (haveCreds()) {setCloudBadge('cloud-syncing','Saving to cloud...'); await syncCloud('push');}
 });
 
 // Delete (delegated)
@@ -263,7 +277,7 @@ document.addEventListener('click', async e=>{
   const arr = getEntries();
   if (Number.isInteger(idx) && idx >= 0 && idx < arr.length) {
     arr.splice(idx,1); setEntries(arr); render();
-    if (haveCreds()) {setCloudBadge('cloud-syncing','Saving to cloud…'); await syncCloud('push');}
+    if (haveCreds()) {setCloudBadge('cloud-syncing','Saving to cloud...'); await syncCloud('push');}
   }
 });
 
@@ -296,7 +310,7 @@ document.getElementById('saveSettings').onclick = async ()=>{
   localStorage.setItem(NP_KEY_KEY, npKeyEl.value.trim());
   syncStatus.textContent = 'Saved.';
   if (haveCreds()) { 
-    setCloudBadge('cloud-syncing','Saving to cloud…'); 
+    setCloudBadge('cloud-syncing','Saving to cloud...'); 
     await syncCloud('push'); 
   } else {
     setCloudBadge('cloud-local','Local-only mode');
@@ -309,7 +323,7 @@ document.getElementById('clearSettings').onclick = ()=>{
 };
 document.getElementById('syncNow').onclick = async ()=>{ 
   if (haveCreds()) {
-    setCloudBadge('cloud-syncing','Syncing…'); 
+    setCloudBadge('cloud-syncing','Syncing...'); 
     await syncCloud('pull');
   } 
 };
@@ -318,7 +332,7 @@ document.getElementById('syncNow').onclick = async ()=>{
 (function initSettings(){
   const {url,key} = getCreds();
   npUrlEl.value = url; npKeyEl.value = key;
-  setCloudBadge(haveCreds() ? 'cloud-syncing' : 'cloud-local', haveCreds() ? 'Checking cloud…' : 'Local-only');
+  setCloudBadge(haveCreds() ? 'cloud-syncing' : 'cloud-local', haveCreds() ? 'Checking cloud...' : 'Local-only');
 })();
 
 // Push enable (auto-hide instructions when done / already granted)
@@ -360,7 +374,7 @@ async function syncCloud(mode) {
   const localEntries = getEntries();
   const localUpdated = localStorage.getItem(UPDATED_AT_KEY) || null;
 
-  setCloudBadge('cloud-syncing','Contacting cloud…'); // start
+  setCloudBadge('cloud-syncing','Contacting cloud...'); // start
 
   // 1) GET remote (never push if GET fails)
   let remote = null;
@@ -453,7 +467,7 @@ async function syncCloud(mode) {
 
   async function pushLocal(reason) {
     try {
-      setCloudBadge('cloud-syncing','Saving to cloud…');
+      setCloudBadge('cloud-syncing','Saving to cloud...');
       const payload = { entries: localEntries, meta: { updatedAt: new Date().toISOString() } };
       const postRes = await fetch(url, {
         method: 'POST',
@@ -474,7 +488,7 @@ async function syncCloud(mode) {
 
 // On load: safe, non-destructive bootstrap
 (async function initialSync(){
-  if (haveCreds()) { setCloudBadge('cloud-syncing','Checking cloud…'); await syncCloud('bootstrap'); }
+  if (haveCreds()) { setCloudBadge('cloud-syncing','Checking cloud...'); await syncCloud('bootstrap'); }
   else { setCloudBadge('cloud-local','Local-only'); }
 })();
 
