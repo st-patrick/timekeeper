@@ -2,16 +2,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
-<!-- Tell the UA we support both color schemes (affects form controls, etc.) -->
-<meta name="color-scheme" content="light dark">
-
-<!-- Android/Chrome/desktop address bar color by system theme -->
-<meta name="theme-color" content="#0b0b0f" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f7f8fb" media="(prefers-color-scheme: light)">
-
 <!-- iOS PWA status bar (standalone). We'll override via JS on load too. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta id="ios-status" name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
 
 <link rel="manifest" href="/manifest.json">
@@ -144,6 +137,7 @@
         <button id="saveSettings">Save</button>
         <button id="syncNow">Sync now</button>
         <button id="clearSettings">Clear</button>
+        <button id="exportBtn">Export (.csv)</button>
         <span id="syncStatus" class="muted"></span>
       </div>
     </div>
@@ -374,13 +368,17 @@ document.getElementById('saveSettings').onclick = async ()=>{
   localStorage.setItem(NP_URL_KEY, npUrlEl.value.trim());
   localStorage.setItem(NP_KEY_KEY, npKeyEl.value.trim());
   syncStatus.textContent = 'Saved.';
-  if (haveCreds()) { 
-    setCloudBadge('cloud-syncing','Saving to cloud...'); 
-    await syncCloud('push'); 
+
+  if (haveCreds()) {
+    // IMPORTANT: do NOT push here. Only pull from cloud to hydrate locally.
+    setCloudBadge('cloud-syncing','Checking cloud…');
+    await syncCloud('pull');                 // ← pull-only, no write
+    setCloudBadge('cloud-ok','Cloud linked (no upload)');
   } else {
-    setCloudBadge('cloud-local','Local-only mode');
+    setCloudBadge('cloud-local','Local-only');
   }
 };
+
 document.getElementById('clearSettings').onclick = ()=>{
   localStorage.removeItem(NP_URL_KEY); localStorage.removeItem(NP_KEY_KEY);
   syncStatus.textContent = 'Cleared. Local-only mode.';
@@ -551,10 +549,73 @@ async function syncCloud(mode) {
   }
 }
 
+
+function entriesToCSV(rows) {
+  // Header
+  const out = ['timestamp,text'];
+  for (const r of rows) {
+    const ts = r.t || '';
+    // Escape CSV content: wrap in quotes, double any inner quotes, normalize newlines
+    const text = String(r.text ?? '')
+      .replace(/"/g, '""')
+      .replace(/\r?\n|\r/g, ' / ');
+    out.push(`"${ts}","${text}"`);
+  }
+  return out.join('\r\n');
+}
+
+async function exportCSV() {
+  const entries = getEntries();
+  if (!entries.length) { alert('No entries to export.'); return; }
+
+  // Sort chronologically (old→new) for export readability
+  const sorted = [...entries].sort((a,b)=> new Date(a.t) - new Date(b.t));
+
+  const csv = entriesToCSV(sorted);
+  const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8' }); // BOM for Excel
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const filename = `timekeeper-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}.csv`;
+
+  // Prefer Share sheet if supported (mobile)
+  try {
+    if (navigator.canShare && 'share' in navigator && typeof File !== 'undefined') {
+      const file = new File([blob], filename, { type: 'text/csv' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'timekeeper export' });
+        return;
+      }
+    }
+  } catch (err) {
+    // If user cancels share, fall through to download
+    console.warn('share failed or cancelled', err);
+  }
+
+  // Fallback: trigger download
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+}
+
+// Wire up button
+document.getElementById('exportBtn').onclick = exportCSV;
+
+
+
 // On load: safe, non-destructive bootstrap
+// On load: pull-only so we never upload on first run
 (async function initialSync(){
-  if (haveCreds()) { setCloudBadge('cloud-syncing','Checking cloud...'); await syncCloud('bootstrap'); }
-  else { setCloudBadge('cloud-local','Local-only'); }
+  if (haveCreds()) {
+    setCloudBadge('cloud-syncing','Checking cloud…');
+    await syncCloud('pull');                 // ← pull-only
+  } else {
+    setCloudBadge('cloud-local','Local-only');
+  }
 })();
+
 
 </script>
