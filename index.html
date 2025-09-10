@@ -195,9 +195,16 @@ function setCloudBadge(state, tooltip){
 function nowISO(){ return new Date().toISOString() }
 function escapeHtml(s){return s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
 function getEntries(){ try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]")}catch{ return [] }}
-function setEntries(arr){ localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); localStorage.setItem(UPDATED_AT_KEY, nowISO()) }
-function putEntry(text){ const arr=getEntries(); arr.unshift({ t: nowISO(), text }); setEntries(arr) }
-
+// When bump=true, we mark a local write by updating UPDATED_AT_KEY to now.
+function setEntries(arr, bump = false){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+  if (bump) localStorage.setItem(UPDATED_AT_KEY, nowISO());
+}
+function putEntry(text){
+  const arr = getEntries();
+  arr.unshift({ t: nowISO(), text });
+  setEntries(arr, /* bump */ true);
+}
 function getCreds(){ return { url: localStorage.getItem(NP_URL_KEY)||'', key: localStorage.getItem(NP_KEY_KEY)||'' } }
 function haveCreds(){ const {url,key}=getCreds(); return !!(url && key) }
 
@@ -298,7 +305,7 @@ document.getElementById('entryForm').addEventListener('submit', async e=>{
   putEntry(v);
   document.getElementById('activityInput').value=''; render();
   document.getElementById('saved').textContent = 'Saved ✓'; setTimeout(()=>document.getElementById('saved').textContent='',1100);
-  if (haveCreds()) {setCloudBadge('cloud-syncing','Saving to cloud...'); await syncCloud('push');}
+  if (haveCreds()) {setCloudBadge('cloud-syncing','Syncing...'); await syncCloud('auto');}
 });
 
 // Delete (delegated)
@@ -308,8 +315,8 @@ document.addEventListener('click', async e=>{
   const idx = parseInt(btn.dataset.index, 10);
   const arr = getEntries();
   if (Number.isInteger(idx) && idx >= 0 && idx < arr.length) {
-    arr.splice(idx,1); setEntries(arr); render();
-    if (haveCreds()) {setCloudBadge('cloud-syncing','Saving to cloud...'); await syncCloud('push');}
+    arr.splice(idx,1); setEntries(arr, true); render();
+    if (haveCreds()) {setCloudBadge('cloud-syncing','Syncing...'); await syncCloud('auto');}
   }
 });
 
@@ -370,10 +377,10 @@ document.getElementById('saveSettings').onclick = async ()=>{
   syncStatus.textContent = 'Saved.';
 
   if (haveCreds()) {
-    // IMPORTANT: do NOT push here. Only pull from cloud to hydrate locally.
     setCloudBadge('cloud-syncing','Checking cloud…');
-    await syncCloud('pull');                 // ← pull-only, no write
-    setCloudBadge('cloud-ok','Cloud linked (no upload)');
+    await syncCloud('auto');
+    setCloudBadge('cloud-ok','Cloud linked');
+    startAutoSync();
   } else {
     setCloudBadge('cloud-local','Local-only');
   }
@@ -387,7 +394,7 @@ document.getElementById('clearSettings').onclick = ()=>{
 document.getElementById('syncNow').onclick = async ()=>{ 
   if (haveCreds()) {
     setCloudBadge('cloud-syncing','Syncing...'); 
-    await syncCloud('pull');
+    await syncCloud('auto');
   } 
 };
 
@@ -430,21 +437,31 @@ document.getElementById('enable').onclick = enablePush;
 if (new URL(location).searchParams.get('ping') === '1') { document.getElementById('activityInput').focus() }
 
 // ---------- Cloud sync (POST + Bearer), now safe on fresh devices ----------
-async function syncCloud(mode) {
+async function syncCloud(mode = 'auto') {
+  // modes:
+  // 'auto'  -> compare stamps; push if local newer, pull if remote newer
+  // 'pull'  -> unconditionally pull (if remote has data)
+  // 'push'  -> unconditionally push
+
   const { url, key } = getCreds();
   if (!url || !key) { setCloudBadge('cloud-local','Local-only'); return; }
 
+  const newer = (a, b) => a && (!b || new Date(a) > new Date(b));
   const localEntries = getEntries();
-  const localUpdated = localStorage.getItem(UPDATED_AT_KEY) || null;
+  let localStamp = localStorage.getItem(UPDATED_AT_KEY) || null;
+  // Bootstrap legacy installs that never had UPDATED_AT_KEY:
+  if (!localStamp && localEntries.length) {
+    localStamp = nowISO();
+    localStorage.setItem(UPDATED_AT_KEY, localStamp);
+  }
 
-  setCloudBadge('cloud-syncing','Contacting cloud...'); // start
+  setCloudBadge('cloud-syncing','Contacting cloud...');
 
-  // 1) GET remote (never push if GET fails)
-  let remote = null;
+  // GET remote (no push if GET fails)
+  let remote;
   try {
     const res = await fetch(url, { headers: { 'Authorization': `Bearer ${key}` } });
     if (!res.ok) {
-      console.warn('cloud GET failed', res.status);
       $('#syncStatus') && ($('#syncStatus').textContent = 'Cloud read failed; not syncing.');
       setCloudBadge('cloud-error','Cloud read failed');
       return;
@@ -458,96 +475,85 @@ async function syncCloud(mode) {
   }
 
   const remoteEntries = Array.isArray(remote?.entries) ? remote.entries : [];
-  const rUpdated = remote?.meta?.updatedAt || null;
-  const newer = (a, b) => a && (!b || new Date(a) > new Date(b));
+  const remoteStamp = remote?.meta?.updatedAt || null;
 
-  // 2) Handle explicit modes
-  if (mode === 'pull') {
-    if (remoteEntries.length && (!localEntries.length || newer(rUpdated, localUpdated))) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
-      if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
-      render();
-      $('#syncStatus') && ($('#syncStatus').textContent = 'Pulled from cloud.');
-      setCloudBadge('cloud-ok','Pulled from cloud');
-      return;
-    }
-    $('#syncStatus') && ($('#syncStatus').textContent = 'Nothing to pull.');
-    setCloudBadge('cloud-ok','Up to date');
-    return;
-  }
-
-  if (mode === 'bootstrap') {
-    if (remoteEntries.length && !localEntries.length) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
-      if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
-      render();
-      $('#syncStatus') && ($('#syncStatus').textContent = 'Bootstrapped from cloud.');
-      setCloudBadge('cloud-ok','Bootstrapped from cloud');
-      return;
-    }
-    // fall through for normal resolution
-  }
-
-  if (mode === 'push') {
-    return await pushLocal('Manual push');
-  }
-
-  // 3) Auto-resolution matrix
-  if (!localEntries.length && !remoteEntries.length) {
-    $('#syncStatus') && ($('#syncStatus').textContent = 'Nothing to sync.');
-    setCloudBadge('cloud-ok','Up to date');
-    return;
-  }
-  if (!localEntries.length && remoteEntries.length) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
-    if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
+  // Helpers
+  async function doPull(reason='Pulled from cloud') {
+    if (!remoteEntries.length && !remoteStamp) { $('#syncStatus') && ($('#syncStatus').textContent = 'Cloud empty; nothing to pull.'); setCloudBadge('cloud-ok','Up to date'); return; }
+    // write entries without bump; then set UPDATED_AT to the cloud stamp
+    setEntries(remoteEntries, /* bump */ false);
+    if (remoteStamp) localStorage.setItem(UPDATED_AT_KEY, remoteStamp);
     render();
-    $('#syncStatus') && ($('#syncStatus').textContent = 'Pulled from cloud.');
-    setCloudBadge('cloud-ok','Pulled from cloud');
-    return;
-  }
-  if (localEntries.length && !remoteEntries.length) {
-    return await pushLocal('Pushed local (remote empty)');
+    $('#syncStatus') && ($('#syncStatus').textContent = reason);
+    setCloudBadge('cloud-ok','Pulled');
   }
 
-  const localStamp = localUpdated || (localEntries[0]?.t || null);
-  const remoteStamp = rUpdated || (remoteEntries[0]?.t || null);
-
-  if (newer(localStamp, remoteStamp)) {
-    return await pushLocal('Pushed newer local');
-  } else if (newer(remoteStamp, localStamp)) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
-    if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
-    render();
-    $('#syncStatus') && ($('#syncStatus').textContent = 'Pulled from cloud.');
-    setCloudBadge('cloud-ok','Pulled newer cloud');
-    return;
-  } else {
-    $('#syncStatus') && ($('#syncStatus').textContent = 'Already in sync.');
-    setCloudBadge('cloud-ok','Up to date');
-    return;
-  }
-
-  async function pushLocal(reason) {
+  async function doPush(reason='Synced to cloud') {
     try {
-      setCloudBadge('cloud-syncing','Saving to cloud...');
-      const payload = { entries: localEntries, meta: { updatedAt: new Date().toISOString() } };
+      // IMPORTANT: set meta.updatedAt to localStamp (latest entry), not "now"
+      const stamp = localStamp || nowISO();
+      const payload = { entries: localEntries, meta: { updatedAt: stamp } };
       const postRes = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify(payload)
       });
       if (!postRes.ok) throw new Error('POST failed');
-      localStorage.setItem(UPDATED_AT_KEY, payload.meta.updatedAt);
-      $('#syncStatus') && ($('#syncStatus').textContent = `Synced to cloud. (${reason})`);
-      setCloudBadge('cloud-ok','Synced to cloud');
+      // Keep local UPDATED_AT in sync with what we wrote
+      localStorage.setItem(UPDATED_AT_KEY, stamp);
+      $('#syncStatus') && ($('#syncStatus').textContent = reason);
+      setCloudBadge('cloud-ok','Synced');
     } catch (e) {
       console.warn('cloud POST error', e);
       $('#syncStatus') && ($('#syncStatus').textContent = 'Cloud write error.');
       setCloudBadge('cloud-error','Cloud write error — local only');
     }
   }
+
+  // Mode behavior
+  if (mode === 'pull') {
+    return await doPull('Pulled (manual)');
+  }
+  if (mode === 'push') {
+    // If local is empty, don’t upload emptiness; just pull
+    if (!localEntries.length && remoteEntries.length) return await doPull('Pulled (local empty)');
+    return await doPush('Synced (manual)');
+  }
+
+  // AUTO: decide by stamps (or by emptiness)
+  if (!localStamp && !remoteStamp) { $('#syncStatus') && ($('#syncStatus').textContent = 'Nothing to sync.'); setCloudBadge('cloud-ok','Up to date'); return; }
+  if (!localStamp && remoteStamp) { return await doPull('Pulled (no local stamp)'); }
+  if (localStamp && !remoteStamp) { return await doPush('Synced (no cloud stamp)'); }
+
+  if (newer(localStamp, remoteStamp)) {
+    return await doPush('Synced (local newer)');
+  } else if (newer(remoteStamp, localStamp)) {
+    return await doPull('Pulled (cloud newer)');
+  } else {
+    // equal stamps → assume in sync
+    $('#syncStatus') && ($('#syncStatus').textContent = 'Already in sync.');
+    setCloudBadge('cloud-ok','Up to date');
+    return;
+  }
 }
+
+let syncTimer = null;
+function startAutoSync(){
+  if (syncTimer) clearInterval(syncTimer);
+  if (!haveCreds()) return;
+  // kick once soon after setting up
+  setTimeout(() => syncCloud('auto'), 1500);
+  // then every minute
+  syncTimer = setInterval(() => {
+    if (!document.hidden) syncCloud('auto');
+  }, 60_000);
+
+  // also sync when tab/app regains focus
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && haveCreds()) syncCloud('auto');
+  }, { once: true });
+}
+
 
 
 function entriesToCSV(rows) {
@@ -611,7 +617,8 @@ document.getElementById('exportBtn').onclick = exportCSV;
 (async function initialSync(){
   if (haveCreds()) {
     setCloudBadge('cloud-syncing','Checking cloud…');
-    await syncCloud('pull');                 // ← pull-only
+    await syncCloud('auto');                 // ← pull-only
+    startAutoSync();
   } else {
     setCloudBadge('cloud-local','Local-only');
   }
