@@ -1,0 +1,3 @@
+tiny-push/node_modules/**
+.DS_Store
+tiny-push/.npmrc
