@@ -21,8 +21,6 @@
   @media (prefers-color-scheme: light){:root{--bg:#f7f8fb;--card:#fff;--fg:#222;--muted:#6b7280;--border:#e6e8ef;--shadow:0 8px 20px rgba(30,45,75,.09)}}
   html,body{height:100%}
   body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--fg);
-       background:radial-gradient(900px 450px at 12% -10%,rgba(122,162,255,.12),transparent 60%),
-                  radial-gradient(700px 380px at 110% 10%,rgba(201,162,255,.12),transparent 60%),var(--bg);
        display:grid;place-items:start center;padding:10px}
   .wrap{width:100%;max-width:820px}
   .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px}
@@ -74,6 +72,22 @@
   .entry-text{color:var(--fg);font-size:14px}
   .entry-meta{display:flex;align-items:center;justify-content:space-between;margin-top:6px;color:var(--muted);font-size:12px}
   .delete{color:#ff7a7a;border-color:rgba(255,122,122,.4);background:linear-gradient(180deg,rgba(255,122,122,.12),rgba(0,0,0,.02))}
+
+  /* Collapsible year/month styling (matches your day look) */
+  details.year, details.month { padding:6px 0 }
+  details.year > summary,
+  details.month > summary {
+    list-style:none; cursor:pointer;
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+  }
+  details.year > summary::-webkit-details-marker,
+  details.month > summary::-webkit-details-marker { display:none }
+
+  /* Optional: subtle separators to help scan */
+  details.year { border-top:1px solid var(--border) }
+  .month-title { font-weight:700; opacity:.85; margin:2px 0 }
+  .year-title  { font-weight:800; opacity:.9;  margin:2px 0 }
+
 
   /* --- Cloud status badge --- */
   .cloud-badge{
@@ -159,6 +173,14 @@ const NP_URL_KEY = 'np_url';
 const NP_KEY_KEY = 'np_key';
 const SORT_KEY = 'sortOrder'; // 'desc' (facebook) or 'asc' (biographic)
 
+// Runtime-only collapse state (resets on full reload)
+const uiState = {
+  yearClosed: new Set(),             // keys: "2025"
+  monthClosed: new Set(),             // keys: "2025-09"
+  dayClosed:   new Set()              // keys: "YYYY-MM-DD"
+};
+
+
 const $ = sel => document.querySelector(sel);
 
 function setCloudBadge(state, tooltip){
@@ -195,7 +217,10 @@ function render(){
   const order = sortPref(); // 'asc' or 'desc'
   const arr = getEntries();
   const container = $('#groups');
-  if (!arr.length) { container.innerHTML = `<div class="muted">No entries yet — your first one will appear here.</div>`; return; }
+  if (!arr.length) {
+    container.innerHTML = `<div class="muted">No entries yet — your first one will appear here.</div>`;
+    return;
+  }
 
   // Group: Year -> Month(01..12) -> Day (YYYY-MM-DD)
   const groups = {};
@@ -211,24 +236,35 @@ function render(){
     groups[y][mIdx].days[dayKey].items.push({ ...e, index });
   });
 
-  const cmp = order === 'asc'
-    ? (a,b)=>a.localeCompare(b)
-    : (a,b)=>b.localeCompare(a);
+  const cmp = order === 'asc' ? (a,b)=>a.localeCompare(b) : (a,b)=>b.localeCompare(a);
 
   let html = '';
   const years = Object.keys(groups).sort(cmp);
   for (const y of years) {
-    html += `<div class="year"><div class="year-title">${y}</div>`;
-    const months = Object.keys(groups[y]).sort(cmp);
+    const yOpen = !uiState.yearClosed.has(y);
+    const monthKeys = Object.keys(groups[y]); // for day count
+    const yearDayCount = monthKeys.reduce((acc, mk) => acc + Object.keys(groups[y][mk].days).length, 0);
+
+    html += `<details class="year"${yOpen ? ' open' : ''} data-year="${y}">
+      <summary><span class="year-title">${y}</span><span class="day-count">${yearDayCount} day${yearDayCount===1?'':'s'}</span></summary>`;
+
+    const months = monthKeys.sort(cmp);
     for (const m of months) {
       const monthObj = groups[y][m];
-      html += `<div class="month"><div class="month-title">${monthObj.label}</div>`;
+      const mKey = `${y}-${m}`;
+      const mOpen = !uiState.monthClosed.has(mKey);
       const days = Object.keys(monthObj.days).sort(cmp);
+
+      html += `<details class="month"${mOpen ? ' open' : ''} data-key="${mKey}">
+        <summary><span class="month-title">${monthObj.label}</span><span class="day-count">${days.length} day${days.length===1?'':'s'}</span></summary>`;
+
       for (const day of days) {
         const { label, items } = monthObj.days[day];
         // Sort entries within the day by time per current order
         items.sort((a,b)=> order==='asc' ? new Date(a.t)-new Date(b.t) : new Date(b.t)-new Date(a.t));
-        html += `<details class="day" open>
+        const dKey = day;                         // day is already "YYYY-MM-DD"
+        const dOpen = !uiState.dayClosed.has(dKey);
+        html += `<details class="day"${dOpen ? ' open' : ''} data-day="${dKey}">
           <summary><span>${label}</span><span class="day-count">${items.length} entr${items.length===1?'y':'ies'}</span></summary>
           <ul class="entries">`;
         for (const it of items) {
@@ -245,13 +281,15 @@ function render(){
         }
         html += `</ul></details>`;
       }
-      html += `</div>`;
-    }
-    html += `</div>`;
-  }
-  container.innerHTML = html;
 
-  // Update toggle label/title to reflect current order
+      html += `</details>`; // /month
+    }
+
+    html += `</details>`; // /year
+  }
+
+  container.innerHTML = html;
+  // Update toggle title
   const toggle = $('#toggleSort');
   toggle.title = order === 'asc' ? 'Sort: Old → New (click for New → Old)' : 'Sort: New → Old (click for Old → New)';
 }
@@ -280,6 +318,33 @@ document.addEventListener('click', async e=>{
     if (haveCreds()) {setCloudBadge('cloud-syncing','Saving to cloud...'); await syncCloud('push');}
   }
 });
+
+// Remember open/closed for years & months while app runs (reset on reload)
+document.addEventListener('toggle', (e) => {
+  const el = e.target;
+  if (!(el instanceof HTMLDetailsElement)) return;
+
+  if (el.classList.contains('year')) {
+    const y = el.dataset.year;
+    if (!y) return;
+    if (el.open) uiState.yearClosed.delete(y);
+    else uiState.yearClosed.add(y);
+
+  } else if (el.classList.contains('month')) {
+    const k = el.dataset.key;
+    if (!k) return;
+    if (el.open) uiState.monthClosed.delete(k);
+    else uiState.monthClosed.add(k);
+
+  } else if (el.classList.contains('day')) {
+    const d = el.dataset.day;            // "YYYY-MM-DD"
+    if (!d) return;
+    if (el.open) uiState.dayClosed.delete(d);
+    else uiState.dayClosed.add(d);
+  }
+}, true);
+
+
 
 // Sort toggle
 document.getElementById('toggleSort').onclick = () => {
