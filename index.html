@@ -1,0 +1,402 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="/manifest.json">
+<title>timekeeper</title>
+<style>
+  :root{--bg:#0b0b0f;--card:#14141b;--fg:#e9e9ef;--muted:#9aa0aa;--border:#1f2230;--shadow:0 8px 24px rgba(0,0,0,.35);--radius:12px}
+  @media (prefers-color-scheme: light){:root{--bg:#f7f8fb;--card:#fff;--fg:#222;--muted:#6b7280;--border:#e6e8ef;--shadow:0 8px 20px rgba(30,45,75,.09)}}
+  html,body{height:100%}
+  body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--fg);
+       background:radial-gradient(900px 450px at 12% -10%,rgba(122,162,255,.12),transparent 60%),
+                  radial-gradient(700px 380px at 110% 10%,rgba(201,162,255,.12),transparent 60%),var(--bg);
+       display:grid;place-items:start center;padding:10px}
+  .wrap{width:100%;max-width:820px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px}
+  .title{display:flex;align-items:center;gap:8px}
+  .title .emoji{font-size:20px;filter:drop-shadow(0 1px 0 rgba(0,0,0,.25))}
+  h1{font-size:22px;margin:0}
+  .icon-btn{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;border:1px solid var(--border);
+           background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.04));color:var(--fg);cursor:pointer}
+  .icon-btn:active{transform:translateY(1px)}
+  .muted{color:var(--muted);font-size:13px}
+
+  .badge{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;
+         background:linear-gradient(135deg,rgba(122,162,255,.16),rgba(201,162,255,.16));margin:6px 0 8px}
+  .badge .spacer{flex:1}
+
+  textarea{width:100%;min-height:96px;resize:vertical;background:#0f1117;color:var(--fg);border:1px solid var(--border);
+           border-radius:10px;padding:10px 12px;line-height:1.35;font-size:15px;outline:none}
+  @media (prefers-color-scheme: light){textarea{background:#fbfbfe}}
+  textarea::placeholder{color:#8b90a1}
+  textarea:focus{border-color:rgba(122,162,255,.7);box-shadow:0 0 0 3px rgba(122,162,255,.14)}
+  .row{display:flex;align-items:center;gap:8px;margin-top:6px}
+  button{appearance:none;cursor:pointer;border:1px solid var(--border);
+         background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(0,0,0,.04));color:var(--fg);
+         padding:8px 12px;border-radius:10px;font-weight:600;letter-spacing:.15px}
+  #enable{background:linear-gradient(135deg,rgba(122,162,255,.28),rgba(201,162,255,.28));border-color:rgba(122,162,255,.5)}
+  .hint{font-size:12px}
+
+  /* Settings panel */
+  #settings{display:none;border:1px solid var(--border);border-radius:10px;padding:10px;margin:6px 0 8px;background:rgba(255,255,255,.03)}
+  .settings-grid{display:grid;grid-template-columns:1fr 160px;gap:8px}
+  .settings-grid input{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:#0f1117;color:var(--fg)}
+  @media (prefers-color-scheme: light){.settings-grid input{background:#fbfbfe}}
+  .settings-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+
+  /* Grouping compact */
+  .toolbar{display:flex;align-items:center;justify-content:space-between;margin:8px 0}
+  .groups{display:grid;gap:6px}
+  .year-title{font-weight:800;opacity:.9;margin:2px 0}
+  .month-title{font-weight:700;opacity:.85;margin:2px 0}
+  details.day{border:1px dashed var(--border);border-radius:8px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(0,0,0,.02));padding:6px 8px}
+  details.day>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  details.day>summary::-webkit-details-marker{display:none}
+  .day-count{font-size:12px;color:var(--muted)}
+  .entries{list-style:none;padding:0;margin:6px 0 0}
+  details.entry{border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin:4px 0;background:rgba(255,255,255,.02)}
+  details.entry>summary{list-style:none;cursor:pointer;display:flex}
+  details.entry>summary::-webkit-details-marker{display:none}
+  .entry-text{color:var(--fg);font-size:14px}
+  .entry-meta{display:flex;align-items:center;justify-content:space-between;margin-top:6px;color:var(--muted);font-size:12px}
+  .delete{color:#ff7a7a;border-color:rgba(255,122,122,.4);background:linear-gradient(180deg,rgba(255,122,122,.12),rgba(0,0,0,.02))}
+</style>
+
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <div class="title">
+        <span class="emoji">⏰</span>
+        <h1>timekeeper</h1>
+        <button class="icon-btn" id="toggleSettings" title="Settings">⚙️</button>
+        <button class="icon-btn" title="Show instructions" id="showHelp">?</button>
+      </div>
+    </div>
+
+    <div class="badge" id="instructions">
+      <span class="muted">Install as an app (Add to Home Screen on iOS), then enable push:</span>
+      <div class="spacer"></div>
+      <button id="enable">Enable hourly notifications</button>
+      <button class="icon-btn" id="dismiss" title="Hide tip">✕</button>
+    </div>
+
+    <div id="settings">
+      <div class="muted" style="margin-bottom:6px">Cloud sync (npoint.io). If set, entries sync automatically; otherwise local-only.</div>
+      <div class="settings-grid">
+        <input id="npUrl" placeholder="npoint endpoint URL (e.g. https://api.npoint.io/abc123)">
+        <input id="npKey" placeholder="API key (Bearer)" type="password">
+      </div>
+      <div class="settings-actions">
+        <button id="saveSettings">Save</button>
+        <button id="syncNow">Sync now</button>
+        <button id="clearSettings">Clear</button>
+        <span id="syncStatus" class="muted"></span>
+      </div>
+    </div>
+
+    <form id="entryForm">
+      <textarea id="activityInput" placeholder="What are you doing right now? (one-liner is perfect)"></textarea>
+      <div class="row">
+        <button type="submit">Save Entry</button>
+        <span id="saved" class="muted hint"></span>
+      </div>
+    </form>
+
+    <div class="toolbar">
+      <h3 style="margin:0">Recent</h3>
+      <button id="toggleSort" class="icon-btn" title="Toggle sort">⇅</button>
+    </div>
+    <div id="groups" class="groups"></div>
+  </div>
+</div>
+
+<script>
+// ==== CONFIG ====
+const API_BASE = "https://tiny-push.timekeeper.workers.dev";
+const VAPID_PUBLIC = "BBaXqZRplicwTZ4UK2RQBOEw4ZOIrj0lZ1eD8BGndehpfzVTcUgoC-Hpu3zXq6HQQOAkET6pGpYi0JqAfqoCWHk";
+// ================
+
+const STORAGE_KEY = 'activityEntries';
+const UPDATED_AT_KEY = 'activityUpdatedAt';
+const SHOW_HELP_KEY = 'showInstructions';
+const NP_URL_KEY = 'np_url';
+const NP_KEY_KEY = 'np_key';
+const SORT_KEY = 'sortOrder'; // 'desc' (facebook) or 'asc' (biographic)
+
+const $ = sel => document.querySelector(sel);
+
+function nowISO(){ return new Date().toISOString() }
+function escapeHtml(s){return s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
+function getEntries(){ try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]")}catch{ return [] }}
+function setEntries(arr){ localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); localStorage.setItem(UPDATED_AT_KEY, nowISO()) }
+function putEntry(text){ const arr=getEntries(); arr.unshift({ t: nowISO(), text }); setEntries(arr) }
+
+function getCreds(){ return { url: localStorage.getItem(NP_URL_KEY)||'', key: localStorage.getItem(NP_KEY_KEY)||'' } }
+function haveCreds(){ const {url,key}=getCreds(); return !!(url && key) }
+
+function humanDay(d){ return d.toLocaleDateString(undefined,{weekday:'short',year:'numeric',month:'short',day:'numeric'}) }
+function humanMonth(d){ return d.toLocaleString(undefined,{month:'long'}) }
+
+function sortPref(){ return localStorage.getItem(SORT_KEY) || 'desc' }
+function setSortPref(v){ localStorage.setItem(SORT_KEY, v) }
+
+function render(){
+  const order = sortPref(); // 'asc' or 'desc'
+  const arr = getEntries();
+  const container = $('#groups');
+  if (!arr.length) { container.innerHTML = `<div class="muted">No entries yet — your first one will appear here.</div>`; return; }
+
+  // Group: Year -> Month(01..12) -> Day (YYYY-MM-DD)
+  const groups = {};
+  arr.forEach((e, index) => {
+    const d = new Date(e.t);
+    const y = String(d.getFullYear());
+    const mIdx = String(d.getMonth()+1).padStart(2,'0'); // 01..12
+    const mLabel = humanMonth(d);
+    const dayKey = d.toISOString().slice(0,10);
+    (groups[y] ||= {});
+    (groups[y][mIdx] ||= { label: mLabel, days: {} });
+    (groups[y][mIdx].days[dayKey] ||= { label: humanDay(d), items: [] });
+    groups[y][mIdx].days[dayKey].items.push({ ...e, index });
+  });
+
+  const cmp = order === 'asc'
+    ? (a,b)=>a.localeCompare(b)
+    : (a,b)=>b.localeCompare(a);
+
+  let html = '';
+  const years = Object.keys(groups).sort(cmp);
+  for (const y of years) {
+    html += `<div class="year"><div class="year-title">${y}</div>`;
+    const months = Object.keys(groups[y]).sort(cmp);
+    for (const m of months) {
+      const monthObj = groups[y][m];
+      html += `<div class="month"><div class="month-title">${monthObj.label}</div>`;
+      const days = Object.keys(monthObj.days).sort(cmp);
+      for (const day of days) {
+        const { label, items } = monthObj.days[day];
+        // Sort entries within the day by time per current order
+        items.sort((a,b)=> order==='asc' ? new Date(a.t)-new Date(b.t) : new Date(b.t)-new Date(a.t));
+        html += `<details class="day" open>
+          <summary><span>${label}</span><span class="day-count">${items.length} entr${items.length===1?'y':'ies'}</span></summary>
+          <ul class="entries">`;
+        for (const it of items) {
+          const time = new Date(it.t).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+          html += `<li>
+            <details class="entry">
+              <summary><div class="entry-text">${escapeHtml(it.text)}</div></summary>
+              <div class="entry-meta">
+                <span>${time}</span>
+                <button class="delete" data-index="${it.index}" title="Delete">Delete</button>
+              </div>
+            </details>
+          </li>`;
+        }
+        html += `</ul></details>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+
+  // Update toggle label/title to reflect current order
+  const toggle = $('#toggleSort');
+  toggle.title = order === 'asc' ? 'Sort: Old → New (click for New → Old)' : 'Sort: New → Old (click for Old → New)';
+}
+
+render();
+
+// Save
+document.getElementById('entryForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const v = document.getElementById('activityInput').value.trim();
+  if(!v) return;
+  putEntry(v);
+  document.getElementById('activityInput').value=''; render();
+  document.getElementById('saved').textContent = 'Saved ✓'; setTimeout(()=>document.getElementById('saved').textContent='',1100);
+  if (haveCreds()) await syncCloud('push');
+});
+
+// Delete (delegated)
+document.addEventListener('click', async e=>{
+  const btn = e.target.closest('.delete');
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.index, 10);
+  const arr = getEntries();
+  if (Number.isInteger(idx) && idx >= 0 && idx < arr.length) {
+    arr.splice(idx,1); setEntries(arr); render();
+    if (haveCreds()) await syncCloud('push');
+  }
+});
+
+// Sort toggle
+document.getElementById('toggleSort').onclick = () => {
+  const next = sortPref() === 'asc' ? 'desc' : 'asc';
+  setSortPref(next);
+  render();
+};
+
+// Instructions (auto-hide if already enabled)
+const instructions = document.getElementById('instructions');
+const showPref = localStorage.getItem(SHOW_HELP_KEY);
+if (Notification.permission === 'granted' || showPref === 'false') instructions.style.display = 'none';
+
+document.getElementById('dismiss').onclick = () => { instructions.style.display = 'none'; localStorage.setItem(SHOW_HELP_KEY,'false') };
+document.getElementById('showHelp').onclick = () => { instructions.style.display = ''; localStorage.setItem(SHOW_HELP_KEY,'true') };
+
+// Settings UI
+const toggleSettingsBtn = document.getElementById('toggleSettings');
+const settings = document.getElementById('settings');
+const npUrlEl = document.getElementById('npUrl');
+const npKeyEl = document.getElementById('npKey');
+const syncStatus = document.getElementById('syncStatus');
+
+toggleSettingsBtn.onclick = ()=>{ settings.style.display = (settings.style.display==='none'||!settings.style.display) ? 'block' : 'none' };
+
+document.getElementById('saveSettings').onclick = async ()=>{
+  localStorage.setItem(NP_URL_KEY, npUrlEl.value.trim());
+  localStorage.setItem(NP_KEY_KEY, npKeyEl.value.trim());
+  syncStatus.textContent = 'Saved.';
+  if (haveCreds()) { await syncCloud('push'); }
+};
+document.getElementById('clearSettings').onclick = ()=>{
+  localStorage.removeItem(NP_URL_KEY); localStorage.removeItem(NP_KEY_KEY);
+  syncStatus.textContent = 'Cleared. Local-only mode.';
+};
+document.getElementById('syncNow').onclick = async ()=>{ if (haveCreds()) await syncCloud('pull'); };
+
+// Load settings fields
+(function initSettings(){
+  const {url,key} = getCreds();
+  npUrlEl.value = url; npKeyEl.value = key;
+})();
+
+// Push enable (auto-hide instructions when done / already granted)
+async function enablePush(){
+  if(!('serviceWorker' in navigator)) return alert('Service Workers not supported here.');
+  const reg = await navigator.serviceWorker.register('/sw.js', {scope:'/'});
+  await navigator.serviceWorker.ready;
+
+  if (Notification.permission === 'granted') {
+    instructions.style.display = 'none';
+    localStorage.setItem(SHOW_HELP_KEY, 'false');
+    alert('Notifications already enabled. You can hide the instructions with ×.');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if(perm !== 'granted') return alert('Permission denied.');
+
+  const key = VAPID_PUBLIC.replace(/-/g,'+').replace(/_/g,'/');
+  const appServerKey = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: appServerKey });
+
+  const r = await fetch(`${API_BASE}/subscribe`, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(sub) });
+  if(!r.ok) return alert('Subscribe failed.');
+
+  instructions.style.display = 'none';
+  localStorage.setItem(SHOW_HELP_KEY, 'false');
+  alert('Hourly notifications enabled! (On iPhone: use the installed app)');
+}
+document.getElementById('enable').onclick = enablePush;
+
+// Focus textarea if opened from notification
+if (new URL(location).searchParams.get('ping') === '1') { document.getElementById('activityInput').focus() }
+
+// ---------- Cloud sync (POST + Bearer), now safe on fresh devices ----------
+async function syncCloud(mode) {
+  const { url, key } = getCreds();
+  if (!url || !key) return;
+
+  const localEntries = getEntries();
+  const localUpdated = localStorage.getItem(UPDATED_AT_KEY) || null;
+
+  let remote = null;
+  try {
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${key}` } });
+    if (!res.ok) {
+      console.warn('cloud GET failed', res.status);
+      $('#syncStatus') && ($('#syncStatus').textContent = 'Cloud read failed; not syncing.');
+      return;
+    }
+    remote = await res.json();
+  } catch (e) {
+    console.warn('cloud GET error', e);
+    $('#syncStatus') && ($('#syncStatus').textContent = 'Cloud read error; not syncing.');
+    return;
+  }
+
+  const remoteEntries = Array.isArray(remote?.entries) ? remote.entries : [];
+  const rUpdated = remote?.meta?.updatedAt || null;
+
+  const newer = (a, b) => a && (!b || new Date(a) > new Date(b));
+
+  if (mode === 'pull') {
+    if (remoteEntries.length && (!localEntries.length || newer(rUpdated, localUpdated))) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
+      if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
+      render(); $('#syncStatus') && ($('#syncStatus').textContent = 'Pulled from cloud.');
+      return;
+    }
+    $('#syncStatus') && ($('#syncStatus').textContent = 'Nothing to pull.');
+    return;
+  }
+
+  if (mode === 'bootstrap') {
+    if (remoteEntries.length && !localEntries.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
+      if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
+      render(); $('#syncStatus') && ($('#syncStatus').textContent = 'Bootstrapped from cloud.');
+      return;
+    }
+  }
+
+  if (mode === 'push') { return await pushLocal(); }
+
+  if (!localEntries.length && !remoteEntries.length) { $('#syncStatus') && ($('#syncStatus').textContent = 'Nothing to sync.'); return; }
+  if (!localEntries.length && remoteEntries.length) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
+    if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
+    render(); $('#syncStatus') && ($('#syncStatus').textContent = 'Pulled from cloud.');
+    return;
+  }
+  if (localEntries.length && !remoteEntries.length) { return await pushLocal(); }
+
+  const localStamp = localUpdated || (localEntries[0]?.t || null);
+  const remoteStamp = rUpdated || (remoteEntries[0]?.t || null);
+
+  if (newer(localStamp, remoteStamp)) { return await pushLocal(); }
+  else if (newer(remoteStamp, localStamp)) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteEntries));
+    if (rUpdated) localStorage.setItem(UPDATED_AT_KEY, rUpdated);
+    render(); $('#syncStatus') && ($('#syncStatus').textContent = 'Pulled from cloud.');
+    return;
+  } else {
+    $('#syncStatus') && ($('#syncStatus').textContent = 'Already in sync.');
+    return;
+  }
+
+  async function pushLocal() {
+    try {
+      const payload = { entries: localEntries, meta: { updatedAt: new Date().toISOString() } };
+      const postRes = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: JSON.stringify(payload)
+      });
+      if (!postRes.ok) throw new Error('POST failed');
+      localStorage.setItem(UPDATED_AT_KEY, payload.meta.updatedAt);
+      $('#syncStatus') && ($('#syncStatus').textContent = 'Synced to cloud.');
+    } catch (e) {
+      console.warn('cloud POST error', e);
+      $('#syncStatus') && ($('#syncStatus').textContent = 'Cloud write error.');
+    }
+  }
+}
+
+// On load: safe, non-destructive bootstrap
+(async function initialSync(){
+  if (haveCreds()) await syncCloud('bootstrap');
+})();
+</script>
