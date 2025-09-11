@@ -271,7 +271,7 @@ function getCreds(){ return { url: localStorage.getItem(NP_URL_KEY)||'', key: lo
 function haveCreds(){ const {url,key}=getCreds(); return !!(url && key) }
 
 function humanDay(d){
-  return d.toLocaleDateString(undefined, { day:'numeric', weekday:'long' });
+  return d.toLocaleDateString(undefined, { day:'numeric'}) + ' - ' + d.toLocaleDateString(undefined, { weekday:'long' });
 }
 function humanMonth(d){ return d.toLocaleString(undefined,{month:'long'}) }
 
