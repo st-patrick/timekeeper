@@ -270,7 +270,9 @@ function putEntry(text){
 function getCreds(){ return { url: localStorage.getItem(NP_URL_KEY)||'', key: localStorage.getItem(NP_KEY_KEY)||'' } }
 function haveCreds(){ const {url,key}=getCreds(); return !!(url && key) }
 
-function humanDay(d){ return d.toLocaleDateString(undefined,{weekday:'short',year:'numeric',month:'short',day:'numeric'}) }
+function humanDay(d){
+  return d.toLocaleDateString(undefined, { day:'numeric', weekday:'long' });
+}
 function humanMonth(d){ return d.toLocaleString(undefined,{month:'long'}) }
 
 function sortPref(){ return localStorage.getItem(SORT_KEY) || 'desc' }
@@ -285,18 +287,18 @@ function render(){
     return;
   }
 
-  // Group: Year -> Month(01..12) -> Day (YYYY-MM-DD)
+  // Group: Year -> Month(01..12) -> Day (DD)  [all LOCAL time]
   const groups = {};
   arr.forEach((e, index) => {
-    const d = new Date(e.t);
+    const d = new Date(e.t);                           // e.t is ISO; Date handles TZ
     const y = String(d.getFullYear());
     const mIdx = String(d.getMonth()+1).padStart(2,'0'); // 01..12
     const mLabel = humanMonth(d);
-    const dayKey = d.toISOString().slice(0,10);
+    const dayKey = String(d.getDate()).padStart(2,'0');    // 01..31 (LOCAL)
     (groups[y] ||= {});
-    (groups[y][mIdx] ||= { label: mLabel, days: {} });
-    (groups[y][mIdx].days[dayKey] ||= { label: humanDay(d), items: [] });
-    groups[y][mIdx].days[dayKey].items.push({ ...e, index });
+    (groups[y][mIdx] ||= { label: mLabel });
+    (groups[y][mIdx][dayKey] ||= { label: humanDay(d), items: [] });
+    groups[y][mIdx][dayKey].items.push({ ...e, index });
   });
 
   const cmp = order === 'asc' ? (a,b)=>a.localeCompare(b) : (a,b)=>b.localeCompare(a);
@@ -305,8 +307,12 @@ function render(){
   const years = Object.keys(groups).sort(cmp);
   for (const y of years) {
     const yOpen = !uiState.yearClosed.has(y);
-    const monthKeys = Object.keys(groups[y]); // for day count
-    const yearDayCount = monthKeys.reduce((acc, mk) => acc + Object.keys(groups[y][mk].days).length, 0);
+    const monthKeys = Object.keys(groups[y]);
+    const yearDayCount = monthKeys.reduce((acc, mk) => {
+      const monthObj = groups[y][mk];
+      const dayKeys = Object.keys(monthObj).filter(k => k !== 'label');
+      return acc + dayKeys.length;
+    }, 0);
 
     html += `<details class="year"${yOpen ? ' open' : ''} data-year="${y}">
       <summary><span class="year-title">${y}</span><span class="day-count">${yearDayCount} day${yearDayCount===1?'':'s'}</span></summary>`;
@@ -316,16 +322,17 @@ function render(){
       const monthObj = groups[y][m];
       const mKey = `${y}-${m}`;
       const mOpen = !uiState.monthClosed.has(mKey);
-      const days = Object.keys(monthObj.days).sort(cmp);
+      // day keys are direct children except 'label'
+      const days = Object.keys(monthObj).filter(k => k !== 'label').sort(cmp);
 
       html += `<details class="month"${mOpen ? ' open' : ''} data-key="${mKey}">
         <summary><span class="month-title">${monthObj.label}</span><span class="day-count">${days.length} day${days.length===1?'':'s'}</span></summary>`;
 
       for (const day of days) {
-        const { label, items } = monthObj.days[day];
+        const { label, items } = monthObj[day];
         // Sort entries within the day by time per current order
         items.sort((a,b)=> order==='asc' ? new Date(a.t)-new Date(b.t) : new Date(b.t)-new Date(a.t));
-        const dKey = day;                         // day is already "YYYY-MM-DD"
+        const dKey = day;                      // "DD" only
         const dOpen = !uiState.dayClosed.has(dKey);
         html += `<details class="day"${dOpen ? ' open' : ''} data-day="${dKey}">
           <summary><span>${label}</span><span class="day-count">${items.length} entr${items.length===1?'y':'ies'}</span></summary>
